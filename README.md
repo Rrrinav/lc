@@ -10,13 +10,13 @@ g++ ./main.cpp -o main -std=c++23
 ```
 
 Terms/things Support:
-    - Variables
-    - Abstraction
-    - Application
-    - Beta reduction ("normal substitution")
-    - Alpha renaming
+- Variables
+- Abstraction
+- Application
+- Beta reduction ("normal substitution")
+- Alpha renaming
 
 Maybe TODOs:
-    - "Normal arithematic" which internally uses church numerals.
-    - proper printing
-    - Term variables
+- "Normal arithematic" which internally uses church numerals.
+- proper printing
+- Term variables
