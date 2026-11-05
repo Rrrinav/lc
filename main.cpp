@@ -2,10 +2,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <print>
 #include <stdexcept>
 #include <string>
-#include <print>
-#include <memory>
 #include <variant>
 #include <vector>
 
@@ -40,42 +40,43 @@ struct Ast
 
 using Ast_ptr = std::shared_ptr<Ast>;
 
-Ast_ptr make(Ast::Node n)
+auto make(Ast::Node n) -> Ast_ptr
 {
     return std::make_shared<Ast>(Ast{std::move(n)});
 }
 
-Ast_ptr var(std::string n)
+auto var(std::string n) -> Ast_ptr
 {
     return make(Var{std::move(n)});
 }
-Ast_ptr lam(std::string p, Ast_ptr b)
+auto lam(std::string p, Ast_ptr b) -> Ast_ptr
 {
     return make(Abs{std::move(p), std::move(b)});
 }
-Ast_ptr app(Ast_ptr l, Ast_ptr r)
+auto app(Ast_ptr l, Ast_ptr r) -> Ast_ptr
 {
     return make(App{std::move(l), std::move(r)});
 }
 
-struct Printer {
-    void operator()(const Ast &ast) const
+struct Printer
+{
+    auto operator()(const Ast &ast) const -> void
     {
         std::visit(*this, ast.node);
     }
 
-    void operator()(const Var &node) const
+    auto operator()(const Var &node) const -> void
     {
         std::print("{}", node.name);
     }
 
-    void operator()(const Abs &node) const
+    auto operator()(const Abs &node) const -> void
     {
         std::print("\\{}.", node.param);
         (*this)(*node.body);
     }
 
-    void operator()(const App &node) const
+    auto operator()(const App &node) const -> void
     {
         // left: only a lambda needs parens, because `\x.x y` would parse as `\x.(x y)`.
         //       A left-nested application needs none, since `f x y` already means `(f x) y`.
@@ -104,20 +105,20 @@ struct Printer {
         }
     }
 
-    void operator()(const std::monostate &) const
+    auto operator()(const std::monostate &) const -> void
     {
         std::print("<\\0>");
     }
 };
-};
+}; // namespace lc::ast
 
-auto print_ast(const lc::ast::Ast& ast)
+auto print_ast(const lc::ast::Ast &ast)
 {
     lc::ast::Printer{}(ast);
     std::print("\n");
 }
 // does variable param appear free in this tree? It traverses the tree
-bool is_variable_free(const std::string &name, const lc::ast::Ast_ptr &tree_to_search)
+auto is_variable_free(const std::string &name, const lc::ast::Ast_ptr &tree_to_search) -> bool
 {
     using namespace lc::ast;
     return std::visit(
@@ -139,23 +140,24 @@ bool is_variable_free(const std::string &name, const lc::ast::Ast_ptr &tree_to_s
         tree_to_search->node);
 }
 
-struct Substitutor {
+struct Substitutor
+{
     // (\x.y)a (x = name, a = value)
-    const std::string &name;      // Thing(name) getting substituted
+    const std::string &name;       // Thing(name) getting substituted
     const lc::ast::Ast_ptr &value; // Thing(variable term) the name is getting substituted with
 
-    lc::ast::Ast_ptr operator()(const lc::ast::Ast_ptr &ast) const
+    auto operator()(const lc::ast::Ast_ptr &ast) const -> lc::ast::Ast_ptr
     {
         return std::visit([&](const auto &n) { return apply(ast, n); }, ast->node);
     }
 
 private:
-    lc::ast::Ast_ptr apply(const lc::ast::Ast_ptr &self, const lc::ast::Var &v) const
+    auto apply(const lc::ast::Ast_ptr &self, const lc::ast::Var &v) const -> lc::ast::Ast_ptr
     {
         return v.name == name ? value : self;
     }
 
-    lc::ast::Ast_ptr apply(const lc::ast::Ast_ptr &self, const lc::ast::Abs &abs) const
+    auto apply(const lc::ast::Ast_ptr &self, const lc::ast::Abs &abs) const -> lc::ast::Ast_ptr
     {
         // \x.\x.x === \x.x because the outer x is never used:
         //  |- outer x
@@ -181,17 +183,17 @@ private:
         return make(lc::ast::Abs{fresh, (*this)(renamed_body)});
     }
 
-    lc::ast::Ast_ptr apply(const lc::ast::Ast_ptr &, const lc::ast::App &app) const
+    auto apply(const lc::ast::Ast_ptr &, const lc::ast::App &app) const -> lc::ast::Ast_ptr
     {
         return make(lc::ast::App{(*this)(app.left), (*this)(app.right)});
     }
 
-    lc::ast::Ast_ptr apply(const lc::ast::Ast_ptr &self, const std::monostate &) const
+    auto apply(const lc::ast::Ast_ptr &self, const std::monostate &) const -> lc::ast::Ast_ptr
     {
         return self;
     }
 
-    std::string fresh_name(const std::string &base, const lc::ast::Ast_ptr &body) const
+    auto fresh_name(const std::string &base, const lc::ast::Ast_ptr &body) const -> std::string
     {
         std::string candidate = base;
         while (candidate == name || is_variable_free(candidate, value) || is_variable_free(candidate, body)) {
@@ -203,27 +205,27 @@ private:
 
 struct Evaluator
 {
-    lc::ast::Ast_ptr operator()(const lc::ast::Ast_ptr &ast) const
+    auto operator()(const lc::ast::Ast_ptr &ast) const -> lc::ast::Ast_ptr
     {
         return std::visit([&](const auto &n) { return eval(ast, n); }, ast->node);
     }
 
 private:
     // already values (or stuck): nothing to do
-    lc::ast::Ast_ptr eval(const lc::ast::Ast_ptr &self, const lc::ast::Var &) const
+    auto eval(const lc::ast::Ast_ptr &self, const lc::ast::Var &) const -> lc::ast::Ast_ptr
     {
         return self;
     }
-    lc::ast::Ast_ptr eval(const lc::ast::Ast_ptr &, const lc::ast::Abs &abs) const
+    auto eval(const lc::ast::Ast_ptr &, const lc::ast::Abs &abs) const -> lc::ast::Ast_ptr
     {
         return make(lc::ast::Abs{abs.param, (*this)(abs.body)});
     }
-    lc::ast::Ast_ptr eval(const lc::ast::Ast_ptr &self, const std::monostate &) const
+    auto eval(const lc::ast::Ast_ptr &self, const std::monostate &) const -> lc::ast::Ast_ptr
     {
         return self;
     }
 
-    lc::ast::Ast_ptr eval(const lc::ast::Ast_ptr &, const lc::ast::App &app) const
+    auto eval(const lc::ast::Ast_ptr &, const lc::ast::App &app) const -> lc::ast::Ast_ptr
     {
         auto fn = (*this)(app.left);
         auto arg = (*this)(app.right);
@@ -235,7 +237,7 @@ private:
 
         // builtin: print
         // Identity + a side effect
-        if (auto* v = std::get_if<lc::ast::Var>(&fn->node); v && v->name == "print") {
+        if (auto *v = std::get_if<lc::ast::Var>(&fn->node); v && v->name == "print") {
             lc::ast::Printer{}(*arg);
             std::println();
             return arg;
@@ -246,7 +248,7 @@ private:
     }
 };
 
-auto apply(const lc::ast::Ast_ptr & ast)
+auto apply(const lc::ast::Ast_ptr &ast)
 {
     return Evaluator{}(ast);
 }
@@ -321,24 +323,25 @@ private:
     std::uint16_t line{1};
     std::uint16_t col{1};
 
-    void advance()
+    auto advance() -> void
     {
         if (_code[_index] == '\n') {
-            ++line; col = 1;
+            ++line;
+            col = 1;
         } else {
             ++col;
         }
         ++_index;
     }
 
-    void skip_whitespace()
+    auto skip_whitespace() -> void
     {
         while (_index < _code.size() && std::isspace(static_cast<unsigned char>(_code[_index]))) {
             advance();
         }
     }
 
-    Token identifier(Pos start)
+    auto identifier(Pos start) -> Token
     {
         std::size_t begin = _index;
         while (_index < _code.size() && is_ident_char(_code[_index])) {
@@ -370,7 +373,7 @@ public:
     explicit Parser(std::span<const Token> t) : tokens(t)
     {}
 
-    ast::Ast_ptr parse()
+    auto parse() -> ast::Ast_ptr
     {
         auto result = term();
         expect(Token_type::end, "expected end of input");
@@ -381,12 +384,12 @@ private:
     std::span<const Token> tokens;
     std::size_t index{0};
 
-    const Token &peek() const
+    auto peek() const -> const Token &
     {
         return tokens[index];
     }
 
-    const Token &advance()
+    auto advance() -> const Token &
     {
         const Token &t = tokens[index];
         if (t.type != Token_type::end) {
@@ -395,7 +398,7 @@ private:
         return t;
     }
 
-    const Token &expect(Token_type t, std::string_view msg)
+    auto expect(Token_type t, std::string_view msg) -> const Token &
     {
         if (peek().type != t) {
             error(msg);
@@ -403,20 +406,20 @@ private:
         return advance();
     }
 
-    [[noreturn]] void error(std::string_view msg) const
+    [[noreturn]] auto error(std::string_view msg) const -> void
     {
-        const Pos &p = peek().pos;
+        auto p = peek().pos;
         throw std::runtime_error(std::format("{}:{}: parse error: {}", p.l, p.c, msg));
     }
 
-    bool starts_atom() const
+    auto starts_atom() const -> bool
     {
         auto k = peek().type;
         return k == Token_type::identifier || k == Token_type::paren_l || k == Token_type::backslash || k == Token_type::print;
     }
 
     // term -> atom atom*
-    ast::Ast_ptr term()
+    auto term() -> ast::Ast_ptr
     {
         auto left = atom();
         while (starts_atom()) { // loop = left associativity
@@ -427,7 +430,7 @@ private:
     }
 
     // atom        -> IDENT | '(' term ')' | '\' IDENT '.' term | 'print' term
-    ast::Ast_ptr atom()
+    auto atom() -> ast::Ast_ptr
     {
         switch (peek().type) {
         case Token_type::identifier: {
@@ -460,9 +463,9 @@ private:
         }
     }
 };
-}
+} // namespace lc::parse
 
-auto print_usage(char * prog)
+auto print_usage(char *prog)
 {
     std::println("Usage: ");
     std::println("  {} <file>", prog);
