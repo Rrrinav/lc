@@ -1,17 +1,20 @@
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <memory>
+#include <iostream>
+#include <memory_resource>
 #include <print>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
-#include <iostream>
 
 namespace lc::ast {
-struct Ast;
+
+using NodeIdx = std::uint32_t;
 
 struct Var
 {
@@ -21,49 +24,67 @@ struct Var
 struct Abs
 {
     std::string param;
-    std::shared_ptr<Ast> body;
+    NodeIdx body;
 };
 
 struct App
 {
-    std::shared_ptr<Ast> left;
-    std::shared_ptr<Ast> right;
+    NodeIdx left;
+    NodeIdx right;
 };
 
-struct Ast
+using NodeData = std::variant<Var, Abs, App, std::monostate>;
+
+struct AstContext
 {
-    static inline constexpr auto Idx_var{0uz}, Idx_abs{1uz}, Idx_app{2uz}, Idx_mono{3uz};
+    std::pmr::vector<NodeData> memory;
 
-    using Node = std::variant<Var, Abs, App, std::monostate>;
+    explicit AstContext(std::pmr::memory_resource *mr) : memory(mr)
+    {
+        memory.reserve(100000); // Prevent frequent vector reallocations
+    }
 
-    Node node;
+    auto make_var(std::string name) -> NodeIdx
+    {
+        memory.push_back(Var{std::move(name)});
+        return memory.size() - 1;
+    }
+
+    auto make_abs(std::string param, NodeIdx body) -> NodeIdx
+    {
+        memory.push_back(Abs{std::move(param), body});
+        return memory.size() - 1;
+    }
+
+    auto make_app(NodeIdx left, NodeIdx right) -> NodeIdx
+    {
+        memory.push_back(App{left, right});
+        return memory.size() - 1;
+    }
+
+    auto make_mono() -> NodeIdx
+    {
+        memory.push_back(std::monostate{});
+        return memory.size() - 1;
+    }
+
+    auto get(NodeIdx idx) -> NodeData &
+    {
+        return memory[idx];
+    }
+    auto get(NodeIdx idx) const -> const NodeData &
+    {
+        return memory[idx];
+    }
 };
-
-using Ast_ptr = std::shared_ptr<Ast>;
-
-auto make(Ast::Node n) -> Ast_ptr
-{
-    return std::make_shared<Ast>(Ast{std::move(n)});
-}
-
-auto var(std::string n) -> Ast_ptr
-{
-    return make(Var{std::move(n)});
-}
-auto lam(std::string p, Ast_ptr b) -> Ast_ptr
-{
-    return make(Abs{std::move(p), std::move(b)});
-}
-auto app(Ast_ptr l, Ast_ptr r) -> Ast_ptr
-{
-    return make(App{std::move(l), std::move(r)});
-}
 
 struct Printer
 {
-    auto operator()(const Ast &ast) const -> void
+    AstContext &ctx;
+
+    auto operator()(NodeIdx ast) const -> void
     {
-        std::visit(*this, ast.node);
+        std::visit(*this, ctx.get(ast));
     }
 
     auto operator()(const Var &node) const -> void
@@ -74,23 +95,18 @@ struct Printer
     auto operator()(const Abs &node) const -> void
     {
         std::print("\\{}.", node.param);
-        (*this)(*node.body);
+        (*this)(node.body);
     }
 
     auto operator()(const App &node) const -> void
     {
-        // left: only a lambda needs parens, because `\x.x y` would parse as `\x.(x y)`.
-        //       A left-nested application needs none, since `f x y` already means `(f x) y`.
-        bool paren_l = std::holds_alternative<Abs>(node.left->node);
-
-        // right: a lambda or an application needs parens.
-        //        Without them, `f (g x)` would print as `f g x`, i.e. `(f g) x`.
-        bool paren_r = !std::holds_alternative<Var>(node.right->node);
+        bool paren_l = std::holds_alternative<Abs>(ctx.get(node.left));
+        bool paren_r = !std::holds_alternative<Var>(ctx.get(node.right));
 
         if (paren_l) {
             std::print("(");
         }
-        (*this)(*node.left);
+        (*this)(node.left);
         if (paren_l) {
             std::print(")");
         }
@@ -100,7 +116,7 @@ struct Printer
         if (paren_r) {
             std::print("(");
         }
-        (*this)(*node.right);
+        (*this)(node.right);
         if (paren_r) {
             std::print(")");
         }
@@ -111,15 +127,16 @@ struct Printer
         std::print("<\\0>");
     }
 };
-}; // namespace lc::ast
 
-auto print_ast(const lc::ast::Ast &ast)
+} // namespace lc::ast
+
+auto print_ast(lc::ast::AstContext &ctx, lc::ast::NodeIdx ast)
 {
-    lc::ast::Printer{}(ast);
+    lc::ast::Printer{ctx}(ast);
     std::print("\n");
 }
-// does variable param appear free in this tree? It traverses the tree
-auto is_variable_free(const std::string &name, const lc::ast::Ast_ptr &tree_to_search) -> bool
+
+auto is_variable_free(lc::ast::AstContext &ctx, const std::string &name, lc::ast::NodeIdx tree_to_search) -> bool
 {
     using namespace lc::ast;
     return std::visit(
@@ -127,77 +144,65 @@ auto is_variable_free(const std::string &name, const lc::ast::Ast_ptr &tree_to_s
             using T = std::decay_t<decltype(search_space)>;
 
             if constexpr (std::is_same_v<T, Var>) {
-                // Variable if present with the name is free (vars are free).
                 return search_space.name == name;
             } else if constexpr (std::is_same_v<T, Abs>) {
-                // If parameter is not same as the value, then it is free.
-                return search_space.param != name && is_variable_free(name, search_space.body);
+                return search_space.param != name && is_variable_free(ctx, name, search_space.body);
             } else if constexpr (std::is_same_v<T, App>) {
-                return is_variable_free(name, search_space.left) || is_variable_free(name, search_space.right);
+                return is_variable_free(ctx, name, search_space.left) || is_variable_free(ctx, name, search_space.right);
             } else {
                 return false;
             }
         },
-        tree_to_search->node);
+        ctx.get(tree_to_search)); // Safe: is_variable_free doesn't allocate
 }
 
 struct Substitutor
 {
-    // (\x.y)a (x = name, a = value)
-    const std::string &name;       // Thing(name) getting substituted
-    const lc::ast::Ast_ptr &value; // Thing(variable term) the name is getting substituted with
+    lc::ast::AstContext &ctx;
+    std::string name; // FIX: Captured by value
+    lc::ast::NodeIdx value;
 
-    auto operator()(const lc::ast::Ast_ptr &ast) const -> lc::ast::Ast_ptr
+    auto operator()(lc::ast::NodeIdx ast) const -> lc::ast::NodeIdx
     {
-        return std::visit([&](const auto &n) { return apply(ast, n); }, ast->node);
+        auto node = ctx.get(ast); // FIX: Copy variant to local stack before visiting
+        return std::visit([&](const auto &n) { return apply(ast, n); }, node);
     }
 
 private:
-    auto apply(const lc::ast::Ast_ptr &self, const lc::ast::Var &v) const -> lc::ast::Ast_ptr
+    auto apply(lc::ast::NodeIdx self, const lc::ast::Var &v) const -> lc::ast::NodeIdx
     {
         return v.name == name ? value : self;
     }
 
-    auto apply(const lc::ast::Ast_ptr &self, const lc::ast::Abs &abs) const -> lc::ast::Ast_ptr
+    auto apply(lc::ast::NodeIdx self, const lc::ast::Abs &abs) const -> lc::ast::NodeIdx
     {
-        // \x.\x.x === \x.x because the outer x is never used:
-        //  |- outer x
-        // Return the whole lambda (self; \x.x) unchanged and stop recursing.
         if (abs.param == name) {
             return self;
         }
 
-        // \y.x with x := a  ->  \y.a
-        // The binder y does not appear free in `value` (x), so it cannot capture
-        // anything. No renaming needed: keep the binder, substitute in the body.
-        if (!is_variable_free(abs.param, value)) {
-            return make(lc::ast::Abs{abs.param, (*this)(abs.body)});
+        if (!is_variable_free(ctx, abs.param, value)) {
+            return ctx.make_abs(abs.param, (*this)(abs.body));
         }
 
-        // \y.x with x := y  ->  would wrongly give \y.y
-        // The binder y IS free in `value`, so rename it first:
-        // pick a new binder name (e.g. y') that clashes with nothing
         auto fresh = fresh_name(abs.param, abs.body);
-        auto renamed_body = Substitutor{abs.param, make(lc::ast::Var{fresh})}(abs.body);
-        // now do the real substitution (name := value) on the renamed body,
-        // and wrap the result in a lambda with the new binder: \y'. ...
-        return make(lc::ast::Abs{fresh, (*this)(renamed_body)});
+        auto renamed_body = Substitutor{ctx, abs.param, ctx.make_var(fresh)}(abs.body);
+        return ctx.make_abs(fresh, (*this)(renamed_body));
     }
 
-    auto apply(const lc::ast::Ast_ptr &, const lc::ast::App &app) const -> lc::ast::Ast_ptr
+    auto apply(lc::ast::NodeIdx, const lc::ast::App &app) const -> lc::ast::NodeIdx
     {
-        return make(lc::ast::App{(*this)(app.left), (*this)(app.right)});
+        return ctx.make_app((*this)(app.left), (*this)(app.right));
     }
 
-    auto apply(const lc::ast::Ast_ptr &self, const std::monostate &) const -> lc::ast::Ast_ptr
+    auto apply(lc::ast::NodeIdx self, const std::monostate &) const -> lc::ast::NodeIdx
     {
         return self;
     }
 
-    auto fresh_name(const std::string &base, const lc::ast::Ast_ptr &body) const -> std::string
+    auto fresh_name(const std::string &base, lc::ast::NodeIdx body) const -> std::string
     {
         std::string candidate = base;
-        while (candidate == name || is_variable_free(candidate, value) || is_variable_free(candidate, body)) {
+        while (candidate == name || is_variable_free(ctx, candidate, value) || is_variable_free(ctx, candidate, body)) {
             candidate += '\'';
         }
         return candidate;
@@ -206,46 +211,50 @@ private:
 
 struct Evaluator
 {
-    auto operator()(const lc::ast::Ast_ptr &ast) const -> lc::ast::Ast_ptr
+    lc::ast::AstContext &ctx;
+
+    auto operator()(lc::ast::NodeIdx ast) const -> lc::ast::NodeIdx
     {
-        return std::visit([&](const auto &n) { return eval(ast, n); }, ast->node);
+        auto node = ctx.get(ast); // FIX: Copy variant to local stack before visiting
+        return std::visit([&](const auto &n) { return eval(ast, n); }, node);
     }
 
 private:
-    // already values (or stuck): nothing to do
-    auto eval(const lc::ast::Ast_ptr &self, const lc::ast::Var &) const -> lc::ast::Ast_ptr
-    {
-        return self;
-    }
-    auto eval(const lc::ast::Ast_ptr &, const lc::ast::Abs &abs) const -> lc::ast::Ast_ptr
-    {
-        return make(lc::ast::Abs{abs.param, (*this)(abs.body)});
-    }
-    auto eval(const lc::ast::Ast_ptr &self, const std::monostate &) const -> lc::ast::Ast_ptr
+    auto eval(lc::ast::NodeIdx self, const lc::ast::Var &) const -> lc::ast::NodeIdx
     {
         return self;
     }
 
-    auto eval(const lc::ast::Ast_ptr &, const lc::ast::App &app) const -> lc::ast::Ast_ptr
+    auto eval(lc::ast::NodeIdx, const lc::ast::Abs &abs) const -> lc::ast::NodeIdx
+    {
+        return ctx.make_abs(abs.param, (*this)(abs.body));
+    }
+
+    auto eval(lc::ast::NodeIdx self, const std::monostate &) const -> lc::ast::NodeIdx
+    {
+        return self;
+    }
+
+    auto eval(lc::ast::NodeIdx, const lc::ast::App &app) const -> lc::ast::NodeIdx
     {
         auto fn = (*this)(app.left);
 
-        if (auto *abs = std::get_if<lc::ast::Abs>(&fn->node)) {
-            // Lazy evaluation... we put the whole body into the function body
-            // the right side will be evaluated later.
-            return (*this)(Substitutor{abs->param, app.right}(abs->body));
+        auto fn_node = ctx.get(fn); // FIX: Copy evaluated function to local stack
+
+        if (auto *abs = std::get_if<lc::ast::Abs>(&fn_node)) {
+            return (*this)(Substitutor{ctx, abs->param, app.right}(abs->body));
         }
 
-        // We only evaluate the right side down here if the left side wasn't a function
-        // meaning the application is stuck (e.g., `y (\x.x)` where y is a free variable).
-        return make(lc::ast::App{fn, (*this)(app.right)});
+        if (auto *v = std::get_if<lc::ast::Var>(&fn_node); v && v->name == "print") {
+            auto arg = (*this)(app.right);
+            lc::ast::Printer{ctx}(arg);
+            std::println();
+            return arg;
+        }
+
+        return ctx.make_app(fn, (*this)(app.right));
     }
 };
-
-auto apply(const lc::ast::Ast_ptr &ast)
-{
-    return Evaluator{}(ast);
-}
 
 namespace lc::parse {
 
@@ -275,7 +284,7 @@ public:
 
         while (true) {
             skip_whitespace();
-            Pos start{line, col}; // position of the token's first char
+            Pos start{line, col};
 
             if (_index >= _code.size()) {
                 out.push_back({Token_type::end, "", start});
@@ -283,6 +292,14 @@ public:
             }
 
             char c = _code[_index];
+
+            if (static_cast<unsigned char>(c) == 0xCE && _index + 1 < _code.size() && static_cast<unsigned char>(_code[_index + 1]) == 0xBB) {
+                advance();
+                advance();
+                out.push_back({Token_type::backslash, "\\", start});
+                continue;
+            }
+
             switch (c) {
             case '\\': {
                 advance();
@@ -357,17 +374,13 @@ private:
     }
 };
 
-/*
- *  term        -> atom atom*
- *  atom        -> IDENT | '(' term ')' | '\' IDENT '.' term | 'print' term
- */
 class Parser
 {
 public:
-    explicit Parser(std::span<const Token> t) : tokens(t)
+    explicit Parser(std::span<const Token> t, ast::AstContext &ctx) : tokens(t), ctx(ctx)
     {}
 
-    auto parse() -> ast::Ast_ptr
+    auto parse() -> ast::NodeIdx
     {
         auto result = term();
         expect(Token_type::end, "expected end of input");
@@ -377,6 +390,7 @@ public:
 private:
     std::span<const Token> tokens;
     std::size_t index{0};
+    ast::AstContext &ctx;
 
     auto peek() const -> const Token &
     {
@@ -387,7 +401,7 @@ private:
     {
         const Token &t = tokens[index];
         if (t.type != Token_type::end) {
-            ++index; // never step past `end`
+            ++index;
         }
         return t;
     }
@@ -412,44 +426,42 @@ private:
         return k == Token_type::identifier || k == Token_type::paren_l || k == Token_type::backslash || k == Token_type::print;
     }
 
-    // term -> atom atom*
-    auto term() -> ast::Ast_ptr
+    auto term() -> ast::NodeIdx
     {
         auto left = atom();
-        while (starts_atom()) { // loop = left associativity
+        while (starts_atom()) {
             auto right = atom();
-            left = ast::make(ast::App{left, right});
+            left = ctx.make_app(left, right);
         }
         return left;
     }
 
-    // atom        -> IDENT | '(' term ')' | '\' IDENT '.' term | 'print' term
-    auto atom() -> ast::Ast_ptr
+    auto atom() -> ast::NodeIdx
     {
         switch (peek().type) {
         case Token_type::identifier: {
-            return ast::make(ast::Var{advance().text});
+            return ctx.make_var(advance().text);
         } break;
 
         case Token_type::paren_l: {
-            advance(); // '('
+            advance();
             auto inner = term();
             expect(Token_type::paren_r, "expected ')'");
             return inner;
         } break;
 
         case Token_type::backslash: {
-            advance(); // '\'
+            advance();
             std::string param = expect(Token_type::identifier, "expected parameter name").text;
             expect(Token_type::dot, "expected '.'");
             auto body = term();
-            return ast::make(ast::Abs{std::move(param), body});
+            return ctx.make_abs(std::move(param), body);
         } break;
 
         case Token_type::print: {
             advance();
             auto operand = term();
-            return ast::make(ast::App{ast::make(ast::Var{"print"}), operand});
+            return ctx.make_app(ctx.make_var("print"), operand);
         } break;
 
         default:
@@ -462,12 +474,15 @@ private:
 auto print_usage(char *prog)
 {
     std::println("Usage: ");
-    std::println("  {} <file>", prog);
+    std::println("  {} [file]", prog);
 }
 
-auto run_repl() -> void
+auto run_repl(lc::ast::AstContext &ctx) -> void
 {
+    std::println("Lambda Calculus REPL");
+    std::println("Use '\\' or 'λ' for lambda, e.g. 'λx.x'");
     std::string line;
+
     while (true) {
         std::print("> ");
         if (!std::getline(std::cin, line)) {
@@ -479,34 +494,47 @@ auto run_repl() -> void
 
         try {
             auto tokens = lc::parse::Lexer(line).tokenize();
-            auto ast = lc::parse::Parser(tokens).parse();
-            auto result = apply(ast);
-            print_ast(*result);
+            auto ast = lc::parse::Parser(tokens, ctx).parse();
+            auto result = Evaluator{ctx}(ast);
+            lc::ast::Printer{ctx}(result);
+            std::println();
         } catch (const std::exception &e) {
-            std::println("error: {}", e.what());
+            std::println("Error: {}", e.what());
         }
     }
 }
 
 auto main(int argc, char *argv[]) -> int
 {
+    std::array<std::byte, 256 * 1024> stack_buffer;
+
+    std::pmr::monotonic_buffer_resource arena{stack_buffer.data(), stack_buffer.size(), std::pmr::new_delete_resource()};
+
+    std::pmr::unsynchronized_pool_resource pool{&arena};
+
+    lc::ast::AstContext ctx{&pool};
+
     if (argc < 2) {
-        std::println(stderr, "error: no file");
-        print_usage(argv[0]);
-        return EXIT_FAILURE;
+        run_repl(ctx);
+        return EXIT_SUCCESS;
     }
 
     try {
         if (!std::filesystem::exists(argv[1])) {
-            throw std::invalid_argument("file doesn't exist");
+            throw std::invalid_argument("File doesn't exist");
         }
 
         std::fstream file(argv[1]);
         std::string code{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-        print_ast(*apply(lc::parse::Parser(lc::parse::Lexer(code).tokenize()).parse()));
+
+        auto tokens = lc::parse::Lexer(code).tokenize();
+        auto ast = lc::parse::Parser(tokens, ctx).parse();
+        auto result = Evaluator{ctx}(ast);
+        print_ast(ctx, result);
+
     } catch (const std::exception &e) {
-        std::println("error: {}", e.what());
+        std::println(stderr, "Error: {}", e.what());
         return EXIT_FAILURE;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
