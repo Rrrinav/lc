@@ -8,6 +8,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <iostream>
 
 namespace lc::ast {
 struct Ast;
@@ -228,23 +229,16 @@ private:
     auto eval(const lc::ast::Ast_ptr &, const lc::ast::App &app) const -> lc::ast::Ast_ptr
     {
         auto fn = (*this)(app.left);
-        auto arg = (*this)(app.right);
 
         if (auto *abs = std::get_if<lc::ast::Abs>(&fn->node)) {
-            // beta reduction
-            return (*this)(Substitutor{abs->param, arg}(abs->body));
+            // Lazy evaluation... we put the whole body into the function body
+            // the right side will be evaluated later.
+            return (*this)(Substitutor{abs->param, app.right}(abs->body));
         }
 
-        // builtin: print
-        // Identity + a side effect
-        if (auto *v = std::get_if<lc::ast::Var>(&fn->node); v && v->name == "print") {
-            lc::ast::Printer{}(*arg);
-            std::println();
-            return arg;
-        }
-
-        // left side isn't a lambda (e.g. free variable): stuck
-        return make(lc::ast::App{fn, arg});
+        // We only evaluate the right side down here if the left side wasn't a function
+        // meaning the application is stuck (e.g., `y (\x.x)` where y is a free variable).
+        return make(lc::ast::App{fn, (*this)(app.right)});
     }
 };
 
@@ -471,23 +465,47 @@ auto print_usage(char *prog)
     std::println("  {} <file>", prog);
 }
 
+auto run_repl() -> void
+{
+    std::string line;
+    while (true) {
+        std::print("> ");
+        if (!std::getline(std::cin, line)) {
+            break;
+        }
+        if (line.empty()) {
+            continue;
+        }
+
+        try {
+            auto tokens = lc::parse::Lexer(line).tokenize();
+            auto ast = lc::parse::Parser(tokens).parse();
+            auto result = apply(ast);
+            print_ast(*result);
+        } catch (const std::exception &e) {
+            std::println("error: {}", e.what());
+        }
+    }
+}
+
 auto main(int argc, char *argv[]) -> int
 {
-    if (argc < 1) {
-        std::println(stderr, "Error: no file");
+    if (argc < 2) {
+        std::println(stderr, "error: no file");
         print_usage(argv[0]);
+        return EXIT_FAILURE;
     }
 
     try {
         if (!std::filesystem::exists(argv[1])) {
-            throw std::invalid_argument("File doesn't exist");
+            throw std::invalid_argument("file doesn't exist");
         }
 
         std::fstream file(argv[1]);
         std::string code{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
         print_ast(*apply(lc::parse::Parser(lc::parse::Lexer(code).tokenize()).parse()));
-    } catch (std::exception *e) {
-        std::println("Error: {}", e->what());
+    } catch (const std::exception &e) {
+        std::println("error: {}", e.what());
         return EXIT_FAILURE;
     }
     return 0;
