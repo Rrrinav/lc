@@ -293,6 +293,7 @@ public:
 
             char c = _code[_index];
 
+            // Parsing for '󰘧' (U+03BB := 0xCE 0xBB; 0b11001110 0b10111011).
             if (static_cast<unsigned char>(c) == 0xCE && _index + 1 < _code.size() && static_cast<unsigned char>(_code[_index + 1]) == 0xBB) {
                 advance();
                 advance();
@@ -477,6 +478,21 @@ auto print_usage(char *prog)
     std::println("  {} [file]", prog);
 }
 
+auto greet_message() -> std::string_view
+{
+    namespace stdch= std::chrono;
+
+    std::time_t current_time = stdch::system_clock::to_time_t(stdch::system_clock::now());
+    int hour = std::localtime(&current_time)->tm_hour;
+
+    using namespace std::string_view_literals;
+    if (hour >= 5 && hour < 18) {
+        return "Have a nice day!"sv;
+    } else {
+        return "Good night!"sv;
+    }
+}
+
 auto run_repl(lc::ast::AstContext &ctx) -> void
 {
     std::println("Lambda Calculus REPL");
@@ -484,12 +500,20 @@ auto run_repl(lc::ast::AstContext &ctx) -> void
     std::string line;
 
     while (true) {
-        std::print("> ");
+        std::print("lc > ");
+
         if (!std::getline(std::cin, line)) {
+            std::println("{}", greet_message());
             break;
         }
+
         if (line.empty()) {
             continue;
+        }
+
+        if (line == ":exit" || line == ":q") {
+            std::println("{}", greet_message());
+            break;
         }
 
         try {
