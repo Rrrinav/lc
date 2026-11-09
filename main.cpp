@@ -159,12 +159,12 @@ auto is_variable_free(lc::ast::AstContext &ctx, const std::string &name, lc::ast
 struct Substitutor
 {
     lc::ast::AstContext &ctx;
-    std::string name; // FIX: Captured by value
+    std::string name;
     lc::ast::NodeIdx value;
 
     auto operator()(lc::ast::NodeIdx ast) const -> lc::ast::NodeIdx
     {
-        auto node = ctx.get(ast); // FIX: Copy variant to local stack before visiting
+        auto node = ctx.get(ast);
         return std::visit([&](const auto &n) { return apply(ast, n); }, node);
     }
 
@@ -215,7 +215,7 @@ struct Evaluator
 
     auto operator()(lc::ast::NodeIdx ast) const -> lc::ast::NodeIdx
     {
-        auto node = ctx.get(ast); // FIX: Copy variant to local stack before visiting
+        auto node = ctx.get(ast);
         return std::visit([&](const auto &n) { return eval(ast, n); }, node);
     }
 
@@ -507,9 +507,7 @@ auto run_repl(lc::ast::AstContext &ctx) -> void
 auto main(int argc, char *argv[]) -> int
 {
     std::array<std::byte, 256 * 1024> stack_buffer;
-
     std::pmr::monotonic_buffer_resource arena{stack_buffer.data(), stack_buffer.size(), std::pmr::new_delete_resource()};
-
     std::pmr::unsynchronized_pool_resource pool{&arena};
 
     lc::ast::AstContext ctx{&pool};
