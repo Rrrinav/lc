@@ -1,1 +1,3 @@
 main
+bin/
+__pycache__/

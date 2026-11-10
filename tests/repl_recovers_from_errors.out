@@ -1,0 +1,5 @@
+Lambda Calculus REPL
+Use '\' or 'λ' for lambda, e.g. 'λx.x'
+lc > \x.x
+lc > Error: 1:2: parse error: expected parameter name
+lc > \y'.y
