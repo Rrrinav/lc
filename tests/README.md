@@ -9,6 +9,7 @@ Each case is a flat pair in this directory:
 | `<name>.out` | no | Expected stdout substrings, one per line (alternative to `.res`) |
 | `<name>.in` | no | REPL stdin, used instead of `<name>.lc` |
 | `<name>.args` | no | Arguments to pass, one per line, used instead of `<name>.lc` |
+| `<name>.flags` | no | Extra arguments appended (for example `--trace`) |
 | `<name>.err` | no | Substring expected on stderr |
 | `<name>.code` | no | Expected exit code (default: 0, or 1 when `.err` exists) |
 

@@ -11,6 +11,7 @@ Optional files for special cases:
     <name>.out    stdout substrings, one per line (for non-deterministic output)
     <name>.in     run the REPL with this stdin instead of a source file
     <name>.args   arguments to pass, one per line, instead of a source file
+    <name>.flags  extra arguments appended (for example --trace)
     <name>.err    substring expected on stderr
     <name>.code   expected exit code (default: 0, or 1 when .err exists)
 
@@ -27,13 +28,13 @@ import argparse
 import os
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SOURCE = ROOT / "main.cpp"
+# All C++ source lives under src/. main.cpp includes the evaluator headers.
+SOURCE = ROOT / "src" / "main.cpp"
 TESTS = ROOT / "tests"
 DEFAULT_BIN_DIR = ROOT / "bin"
 BINARY_NAME = "lc"
@@ -52,11 +53,13 @@ def build_binary(compiler: str, standard: str, bin_dir: Path) -> Path:
     bin_dir = bin_dir.resolve()
     bin_dir.mkdir(parents=True, exist_ok=True)
     binary = bin_dir / BINARY_NAME
-    command = [compiler, str(SOURCE), "-o", str(binary), f"-std={standard}", *BUILD_FLAGS]
+    command = [compiler, str(SOURCE), "-o", str(binary),
+               f"-std={standard}", *BUILD_FLAGS]
 
     print(f"[build] {' '.join(command)}")
     try:
-        result = subprocess.run(command, cwd=ROOT, encoding="utf-8", capture_output=True)
+        result = subprocess.run(
+            command, cwd=ROOT, encoding="utf-8", capture_output=True)
     except FileNotFoundError:
         raise SystemExit(f"error: compiler not found: {compiler}")
 
@@ -65,7 +68,8 @@ def build_binary(compiler: str, standard: str, bin_dir: Path) -> Path:
             print(result.stdout.rstrip())
         if result.stderr.strip():
             print(result.stderr.rstrip(), file=sys.stderr)
-        raise SystemExit(f"error: build failed with exit code {result.returncode}")
+        raise SystemExit(f"error: build failed with exit code {
+                         result.returncode}")
 
     if result.stderr.strip():
         print(f"[warnings]\n{result.stderr.rstrip()}", file=sys.stderr)
@@ -107,16 +111,19 @@ def check_case(binary: Path, case: Test_case) -> list[str]:
     if not result_path.is_file() and not output_path.is_file():
         return [f"missing {result_path.name} (or {output_path.name})"]
 
-    expected_stdout = result_path.read_text(encoding="utf-8") if result_path.is_file() else None
+    expected_stdout = result_path.read_text(
+        encoding="utf-8") if result_path.is_file() else None
     expected_stdout_parts = (
-        [line for line in output_path.read_text(encoding="utf-8").splitlines() if line]
+        [line for line in output_path.read_text(
+            encoding="utf-8").splitlines() if line]
         if output_path.is_file()
         else []
     )
 
     error_path = stem.with_suffix(".err")
     expected_stderr = (
-        error_path.read_text(encoding="utf-8").strip() if error_path.is_file() else ""
+        error_path.read_text(
+            encoding="utf-8").strip() if error_path.is_file() else ""
     )
 
     code_path = stem.with_suffix(".code")
@@ -131,8 +138,10 @@ def check_case(binary: Path, case: Test_case) -> list[str]:
     input_path = stem.with_suffix(".in")
     args_path = stem.with_suffix(".args")
     source_path = stem.with_suffix(".lc")
+    flags_path = stem.with_suffix(".flags")
 
-    inputs = [path for path in (input_path, args_path, source_path) if path.is_file()]
+    inputs = [path for path in (
+        input_path, args_path, source_path) if path.is_file()]
     if len(inputs) != 1:
         found = ", ".join(path.suffix for path in inputs) or "none"
         return [f"expected exactly one of .lc, .in, or .args; found {found}"]
@@ -150,6 +159,15 @@ def check_case(binary: Path, case: Test_case) -> list[str]:
     else:
         arguments = [str(source_path.resolve())]
 
+    # Optional `.flags` file: extra CLI arguments appended after the source
+    # path, for example `--trace` or `--evaluator stack`.
+    if flags_path.is_file():
+        arguments.extend(
+            line.strip()
+            for line in flags_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+
     try:
         result = run_process(binary, arguments, input_text=input_text)
     except subprocess.TimeoutExpired:
@@ -157,30 +175,35 @@ def check_case(binary: Path, case: Test_case) -> list[str]:
 
     problems: list[str] = []
     if result.returncode != expected_returncode:
-        problems.append(f"exit code {result.returncode}, expected {expected_returncode}")
+        problems.append(f"exit code {result.returncode}, expected {
+                        expected_returncode}")
     if expected_stdout is not None:
         if result.stdout != expected_stdout:
-            problems.append(f"stdout was {result.stdout!r}, expected {expected_stdout!r}")
+            problems.append(f"stdout was {result.stdout!r}, expected {
+                            expected_stdout!r}")
     else:
         for part in expected_stdout_parts:
             if part not in result.stdout:
                 problems.append(f"stdout does not contain {part!r}")
     if expected_stderr:
         if expected_stderr not in result.stderr:
-            problems.append(f"stderr {result.stderr!r} does not contain {expected_stderr!r}")
+            problems.append(f"stderr {result.stderr!r} does not contain {
+                            expected_stderr!r}")
     elif result.stderr:
         problems.append(f"unexpected stderr {result.stderr!r}")
     return problems
 
 
 def parse_arguments(arguments: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the interpreter and run its tests.")
+    parser = argparse.ArgumentParser(
+        description="Build the interpreter and run its tests.")
     parser.add_argument(
         "--compiler",
         default=os.environ.get("CXX", "g++"),
         help="C++ compiler to use (default: $CXX or g++)",
     )
-    parser.add_argument("--std", default="c++23", help="C++ standard (default: c++23)")
+    parser.add_argument("--std", default="c++23",
+                        help="C++ standard (default: c++23)")
     parser.add_argument(
         "--bin-dir",
         type=Path,
@@ -188,13 +211,15 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         help=f"directory for the built binary (default: {DEFAULT_BIN_DIR})",
     )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--build-only", action="store_true", help="build the binary and skip tests")
+    mode.add_argument("--build-only", action="store_true",
+                      help="build the binary and skip tests")
     mode.add_argument(
         "--test-only",
         action="store_true",
         help="run tests against an existing binary without rebuilding",
     )
-    parser.add_argument("--filter", default="", help="only run tests whose name contains this text")
+    parser.add_argument("--filter", default="",
+                        help="only run tests whose name contains this text")
     return parser.parse_args(arguments)
 
 
@@ -204,7 +229,8 @@ def main(arguments: list[str]) -> int:
     if options.test_only:
         binary = options.bin_dir.resolve() / BINARY_NAME
         if not binary.is_file():
-            raise SystemExit(f"error: binary not found: {binary} (build it first)")
+            raise SystemExit(f"error: binary not found: {
+                             binary} (build it first)")
     else:
         binary = build_binary(options.compiler, options.std, options.bin_dir)
         if options.build_only:

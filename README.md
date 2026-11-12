@@ -17,6 +17,37 @@ python3 build.py --test-only
 pairs (see `tests/README.md`). It accepts `--compiler`, `--std`,
 `--bin-dir`, and `--filter`. The binary is written to `bin/lc` by default.
 
+## Usage
+
+```sh
+./bin/lc ./file.lc
+./bin/lc ./file.lc --evaluator stack
+./bin/lc ./file.lc --trace
+./bin/lc
+```
+
+- The default evaluator is `recursive`, the original recursive tree walker.
+- `--evaluator stack` uses the explicit-stack reducer. Both produce the same normal form.
+- `--trace` uses the stack reducer and prints every whole-term reduction step:
+
+```text
+(\x.\y.x) y
+→ \y'.y   (α: y → y')
+```
+
+The final line is the normal form. `print` steps are annotated with `(print)`.
+
+The C++ API exposes both implementations through the same template:
+
+```cpp
+lc::Evaluator<lc::recursive_tree_walker>{ctx}(ast);
+lc::Evaluator<lc::explicit_stack_reducer>{ctx}(ast);
+lc::Evaluator<lc::explicit_stack_reducer>{ctx}.trace_execution(ast);
+```
+
+Source files live in `src/`. `src/main.cpp` is the CLI and parser; the evaluators
+are separate headers so they can be studied side by side.
+
 Terms/things Support:
 - Variables
 - Abstraction
