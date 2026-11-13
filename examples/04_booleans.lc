@@ -1,4 +1,4 @@
-# Church booleans: true = \x.\y.x, false = \x.\y.y.
+# Church booleans: true = 󰘧x.󰘧y.x, false = 󰘧x.󰘧y.y.
 #
 # The parentheses around each nested application matter. Application is
 # left-associative, so without them `if negate-applier ...` would give the

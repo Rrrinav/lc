@@ -60,3 +60,7 @@ Maybe TODOs:
 - "Normal arithematic" which internally uses church numerals.
 - proper printing
 - Term variables
+
+## References
+
+Examples take inspiration from this tutorial: [A Tutorial Introduction to the Lambda Calculus](https://personal.utdallas.edu/~gupta/courses/apl/lambda.pdf) by [Rojas Raul](https://www.mi.fu-berlin.de/inf/groups/ag-ki/members/Professoren/rojas_raul.html).
