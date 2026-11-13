@@ -1,0 +1,65 @@
+# Any number in using church numerals is a funciton that takes a function,
+# let's say `f` and a variable, let's say 'x' and applies the function `f`
+# to the variable 'x' the some amount of times.
+#
+# That amount for a number is that number itself.
+#
+# E.g. '2' will apply the function twice.
+#
+# How we write this as numerals is:
+#     0 = (\f.\x x)               ; applies the function 'f' 0 times
+#     1 = (\f.\x f (x))           ; applies the function 'f' 1 times
+#     2 = (\f.\x f (f (x)))       ; applies the function 'f' 2 times
+#     3 = (\f.\x f (f f ((x))))   ; applies the function 'f' 3 times
+#   so on.....
+#
+# How do we add increase a number?
+#   We just increase the number of times f is being applied.
+#
+# S === (\x.\y.\z. y (x y z))
+#
+# When (\x.\y.\z. y (x y z)) will be applied to, say 2
+#   It will result in (\y.\z y (2 y z))
+#   Here, `2 y z` means applying `y` to `z` twice ; We established it earlier
+#   and we apply y to it once more outside.
+#   So, the count increases by 1.
+#
+# How do we add? for 'x + y', we just apply S to y, x times
+#    How? `x S 3`, remember, `x`, a number takes first argument as a function
+#    and applies it to second argument, itself number of times.
+#
+# But we also need a function that can take two arguments and return their sum.
+#    So, we use: (\m.\n.\f.\x. m f (n f x))
+#    Applying it to 2 and 3 gives `\f.\x. 2 f (3 f x)`
+#    This is basically same as successor function, Applies a function frist variable number of times
+#    then second.
+#
+# Similarly, we multiply: x * y is x added y times.
+# We can use (\m.\n.\f.\x. m (n f) x) which follows same method, applies `f` `n` times.
+# Then apply `f` applied `n` times, `m` times.
+#
+# We can also use (\m.\n.\a m (n a));
+#
+# Here m: \f.\g. f^m g ; f^m means f applied m times
+# Here n: \u.\v. u^n v
+#
+# (\m.\n.\a m (n a))
+#
+# first: n a: (\u.\v. u^n v) a
+#     => (\v. a^n v)
+# then: m (n a): (\f.\g f^m g) (\v. a^n v)
+#     => (\g. (\v. a^n v)^m g); A function that applies a n times and a function that applies n times applied a, m times.
+#     => (\g. ((\v. a^n g)^m))
+#     => (\g.\v. a^(n*m) g))
+
+(\mul.\num_one.\num_two. mul num_one num_two)
+    (\x.\y.\z. x (y z))
+    (
+        (\f.\x. f (f x))
+    )
+    (
+        (\add.\two.\three. add two three)
+          (\m.\n.\f.\x. m f (n f x))
+          (\f.\x. f (f x))
+          (\f.\x. f (f (f x)))
+    )

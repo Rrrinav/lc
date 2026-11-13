@@ -1,0 +1,32 @@
+# Church booleans: true = \x.\y.x, false = \x.\y.y.
+#
+# The parentheses around each nested application matter. Application is
+# left-associative, so without them `if negate-applier ...` would give the
+# `if` applier the wrong arguments instead of the whole negate expression.
+#
+# This program computes:
+#
+#     if (negate (or (and true false) false)) then_branch else_branch
+#   = if (negate (or false false)) then_branch else_branch
+#   = if (negate false) then_branch else_branch
+#   = if true then_branch else_branch
+#   = then_branch
+
+(\if.\then.\else. if then else )                                  # `if`, applies `then` or `else`
+    (                                                             # first argument to `if`
+        (\negate.\expr. negate expr)                              # apply `negate`
+        (\x. x (\a.\b. b) (\a.\b. a))                             # `negate`: `true` -> `false`, `false` -> `true`
+        (                                                         # argument to `negate`
+            (\or.\bool_one.\bool_two. or bool_one bool_two)       # apply `or`
+            (\x.\y. x (\x.\y. x) y)                               # `or`, short-circuiting
+            (                                                     # first argument to `or`
+                (\and.\bool_one.\bool_two. and bool_one bool_two) # apply `and`
+                (\x.\y. x y (\x.\y. y))                           # `and`, short-circuiting
+                (\x.\y. x)                                        # `true`, returns first arg
+                (\x.\y. y)                                        # `false`, returns second arg
+            )
+            (\x.\y. y)                                            # second argument to `or`: `false`
+        )
+    )
+    then_branch
+    else_branch

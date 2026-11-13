@@ -42,7 +42,6 @@
 #include "substitution.hpp"
 
 #include <string>
-#include <type_traits>
 #include <variant>
 
 namespace lc {

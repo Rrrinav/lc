@@ -1,0 +1,151 @@
+# Lambda calculus functions take one argument at a time.
+#
+# Therefore:
+#     \x.\y. x y
+#
+# means:
+#     a function that takes x
+#     and returns another function that takes y
+#     and then applies x to y.
+#
+# Roughly:
+#     fn out(x) {
+#         return fn inner(y) {
+#             return x(y);
+#         };
+#     }
+#
+# So it can be called like:
+#
+#     out(x)(y)
+#
+# This style of turning a multi-argument function into nested
+# one-argument functions is called currying.
+#
+# Now consider:
+#
+#     (\x.\y. x y) y
+#
+# There are two different y names here:
+#     (\x. \y. x y) y
+#      |     |   | |
+#      |     |   | +-- outer argument: y
+#      |     |   +---- occurrence of y bound by the inner \y
+#      |     +-------- inner parameter y
+#      +-------------- outer parameter x
+#
+# The inner parameter y and the outside argument y happen to have
+# the same spelling, but they are not the same variable.
+#
+# Before substitution, rename the inner parameter to a fresh name.
+# This harmless renaming is called alpha-conversion:
+#     \x.\y. x y
+#     : α
+#     \x.\z. x z
+#
+# Now apply the function to the outside argument y:
+#     (\x.\z. x z) y
+#
+# The body is:
+#     \z. x z
+#
+# Substitute the argument y for the outer parameter x:
+#     (\z. x z)[x := y]
+#     = \z. y z
+#
+# Therefore:
+#     (\x.\y. x y) y
+#     : α β
+#     (\x.\z. x z) y
+#     : β
+#     \z. y z
+#
+# The result is still a function. It is waiting for another argument:
+#     (\z. y z) a
+#     : β
+#     y a
+#
+# So the outside y does not automatically get applied to itself.
+# The expression returns a function that applies the outside y
+# to whatever argument it receives later.
+#
+#
+# Why not write this?
+#     (\x.\y. x y) y
+#     : β
+#     \y. y y
+#
+# If applied to `a`, this would return `a a`, and not `y a`.
+#
+# Why is this naive reduction wrong?
+#
+# (\x.\y. x y) y
+# : β
+# \y. y y
+#
+# The substitution x := y did happen textually.
+# However, the y inserted in place of x is originally free:
+#     (\x.\y. x y) y
+#                  |
+#          free y from outside
+#
+# After naive substitution:
+#
+#     \y. y y
+#      |    |
+#      |    +-- the inserted y is now inside the scope of \y
+#      +------ inner binder y
+#
+# Therefore the inserted free y has accidentally become bound.
+# Which means that the y from outside is now behaving like the 'y' in function parameter
+#
+#         The problem is like:
+#             int x = 0;
+#             fn out(x) { return x; }
+#             y(x); // returns 0
+#         We fix this with: fn out(other_name) { return other_name; }
+#
+# This is called variable capture.
+#
+# If we apply the naive result to a:
+#     (\y. y y) a
+#     : β
+#     a a
+#
+# But the correct result should preserve the outside y:
+#     (\z. y z) a
+#     : β
+#     y a
+#
+# So alpha-conversion is required before substitution:
+#     \x.\y. x y
+#     : α
+#     \x.\z. x z
+#
+# Then:
+#     (\x.\z. x z) y
+#     : β
+#     \z. y z
+#
+# The outside y remains free, and the inner parameter is now z.
+#
+# Because that would incorrectly capture the outside y.
+# The y inside the result would then look bound by the inner \y,
+# even though it was originally the free argument supplied from outside.
+#
+# Alpha-conversion prevents this collision:
+#     \y. y y       # incorrect result: outside y was captured
+#     \z. y z       # correct result: outside y stays free
+#
+#
+# The general beta-reduction rule is:
+#
+#     (\x. M) N
+#     : β
+#     M[x := N]
+#
+# but the substitution must preserve variable binding.
+# If the argument would become trapped by an inner lambda,
+# first rename that inner lambda using alpha-conversion.
+
+(\x.\y. x y) y

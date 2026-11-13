@@ -18,7 +18,7 @@
 // a matter of printing it:
 //
 //     (\x.\y. x y) y
-//     - \y'.y y'   (α: y → y')
+//     -> \y'.y y'   (α: y -> y')
 //
 // Worked example for `(\x.\y. x y) y`:
 //
@@ -92,7 +92,7 @@ struct Reduction
     bool printed{};
 
     // Alpha-renames performed while substituting, for trace annotations such as
-    // `(α: y → y')`.
+    // `(α: y -> y')`.
     std::vector<std::pair<std::string, std::string>> renames;
 };
 
@@ -261,7 +261,7 @@ private:
 
             if (trace != nullptr) {
                 // Each reduction is printed as `-> <complete term>`.
-                *trace << "=> ";
+                *trace << "-> ";
                 ast::Printer{ctx, *trace}(current);
 
                 if (reduction->printed) {
@@ -276,7 +276,7 @@ private:
                         if (!first) {
                             *trace << ", ";
                         }
-                        *trace << "α: " << old_name << " → " << fresh;
+                        *trace << "α: " << old_name << " -> " << fresh;
                         first = false;
                     }
                     *trace << ")";

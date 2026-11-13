@@ -113,6 +113,11 @@ public:
             }
 
             switch (c) {
+            case '#': {
+                // `#` starts a line comment: skip everything up to the newline.
+                advance();
+                ignore_line();
+            } break;
             case '\\': {
                 advance();
                 out.push_back({Token_type::backslash, "\\", start});
@@ -190,6 +195,22 @@ private:
     static auto is_ident_char(char c) -> bool
     {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '\'';
+    }
+
+    // Skip the rest of a `#` comment, up to (but not including) the newline.
+    // The newline is left in place for `skip_whitespace`, which keeps the line
+    // counter correct for the next token.
+    //
+    // The `if` inside the loop makes this safe at end of file: if the input
+    // ends right after `#`, `_index` is already at the end, so nothing is read
+    // past the buffer. The do/while still handles the common case in one pass.
+    auto ignore_line() -> void
+    {
+        do {
+            if (_index < _code.size()) {
+                advance();
+            }
+        } while (_index < _code.size() && _code[_index] != '\n');
     }
 };
 

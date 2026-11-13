@@ -82,7 +82,7 @@ struct Substitutor
 
     // Optional output parameter used by the trace renderer. Whenever an
     // alpha-rename happens, `(old_name, fresh_name)` is appended so the trace
-    // can show annotations such as `(α: y → y')`.
+    // can show annotations such as `(α: y -> y')`.
     //
     // Normal evaluation leaves this as nullptr and pays no extra cost.
     std::vector<std::pair<std::string, std::string>> *renames{};

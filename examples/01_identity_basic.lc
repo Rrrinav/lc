@@ -1,0 +1,37 @@
+# This represents a simple lambda function.
+# A function is formed using arguments and body
+# ________
+# |      |----> Lambda Function
+# (\x. x) a
+#   |  |  |
+#   |  |  +--> variable (argument), the function is being applied to
+#   |  +-----> body of the function
+#   +--------> parameter of the funcition
+#
+# The whole pattern is:
+# (λx. M) N
+# This is called a beta-redex: a lambda function applied to an argument.
+#
+# Beta-reduction applies the function:
+# (λx. M) N  -> β  M[x := N]
+#                         |-- substitute `N` for `x` in the body `M`
+#
+# For this example:
+#   M = x
+#   N = a
+#
+# Substitute a for x in the body:
+#   M[x := N] = x[x := a] = a
+#
+# Therefore:
+#   (λx. x) a  -> β  a
+# This step is called beta-reduction.
+#
+# So, basically what we do is just replace the free occurance of parameter
+# inside the body of the function with the `term` function is being applied to.
+#
+# > term: any valid expression
+#
+# There, `(\x. x)` takes anything and returns it, so applying it to `a` will return `a`
+
+(λx. x)a

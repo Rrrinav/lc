@@ -1,2 +1,2 @@
 print (\x.x)
-→ \x.x   (print)
+-> \x.x   (print)

@@ -32,7 +32,7 @@ pairs (see `tests/README.md`). It accepts `--compiler`, `--std`,
 
 ```text
 (\x.\y.x) y
-→ \y'.y   (α: y → y')
+-> \y'.y   (α: y -> y')
 ```
 
 The final line is the normal form. `print` steps are annotated with `(print)`.
