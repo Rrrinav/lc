@@ -18,6 +18,7 @@
 // to `\y'.y y'`, alpha-renaming the inner `y` so the outer `y` is not captured.
 
 #include "ast.hpp"
+#include "environment.hpp"
 #include "evaluator.hpp"
 #include "explicit_stack_reducer.hpp"
 #include "printer.hpp"
@@ -43,6 +44,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace lc::parse {
@@ -57,7 +59,8 @@ namespace lc::parse {
 //     paren_r, identifier("y"), end
 //
 // `print` is a keyword token because it is a built-in, not an ordinary variable.
-enum Token_type { backslash, identifier, dot, paren_l, paren_r, end, print };
+// `equal` and `semicolon` delimit top-level definitions and statements.
+enum Token_type { backslash, identifier, dot, paren_l, paren_r, equal, semicolon, end, print };
 
 // 1-based source position, used in lexer and parser error messages.
 struct Pos
@@ -78,7 +81,8 @@ struct Token
 // Supported syntax:
 //   - `\` or `λ` starts a lambda
 //   - identifiers may contain letters, digits, `_`, and `'`
-//   - `.`, `(`, `)`, and whitespace
+//   - `.`, `(`, `)`, `=`, `;`, and whitespace
+//   - `#` starts a line comment
 //
 // Identifiers ending in apostrophes are ordinary names, which is why alpha
 // renaming can produce names such as `y'` and `y''`.
@@ -133,6 +137,14 @@ public:
             case ')': {
                 advance();
                 out.push_back({Token_type::paren_r, ")", start});
+            } break;
+            case '=': {
+                advance();
+                out.push_back({Token_type::equal, "=", start});
+            } break;
+            case ';': {
+                advance();
+                out.push_back({Token_type::semicolon, ";", start});
             } break;
             default: {
                 if (is_ident_start(c)) {
@@ -214,15 +226,27 @@ private:
     }
 };
 
-// Recursive-descent parser for lambda terms.
+// A top-level definition, for example `identity = \a.a`.
+struct Definition
+{
+    std::string name;
+    ast::Node_id value;
+};
+
+// One top-level statement: either a definition or an expression to evaluate.
+using Statement = std::variant<Definition, ast::Node_id>;
+
+// Recursive-descent parser for lambda terms and definitions.
 //
 // Grammar (informally):
 //
-//     term  := atom atom*          // application is left-associative
-//     atom  := identifier
-//            | '(' term ')'
-//            | '\' identifier '.' term
-//            | 'print' term
+//     program   := statement (';' statement)* ';'?
+//     statement := identifier '=' term | term
+//     term      := atom atom*          // application is left-associative
+//     atom      := identifier
+//                | '(' term ')'
+//                | '\' identifier '.' term
+//                | 'print' term
 //
 // Examples:
 //
@@ -230,22 +254,48 @@ private:
 //     \x.x y       -> Abs("x", App(x, y))
 //     (\x.x) y     -> App(Abs("x", x), y)
 //     print x      -> App(Var("print"), x)
+//     identity = \a.a
+//                  -> Definition{"identity", Abs("a", Var("a"))}
 //
 // Because application is parsed left-associatively, `(\x.\y. x y) y` becomes an
 // application of the whole lambda to the final `y`, not an application inside
-// the lambda body.
+// the lambda body. Statements in a file are separated with `;`; in the REPL
+// each input line is parsed separately, so the semicolon is optional there.
 class Parser
 {
 public:
     explicit Parser(std::span<const Token> t, ast::Ast_context &ctx) : tokens(t), ctx(ctx)
     {}
 
-    // Parse one complete term and require the token stream to end afterwards.
-    auto parse() -> ast::Node_id
+    // Parse a whole program: statements separated by semicolons. An empty
+    // program is rejected, matching the old single-term parser.
+    auto parse_program() -> std::vector<Statement>
     {
-        auto result = term();
-        expect(Token_type::end, "expected end of input");
-        return result;
+        std::vector<Statement> statements;
+
+        while (true) {
+            while (peek().type == Token_type::semicolon) {
+                advance();
+            }
+
+            if (peek().type == Token_type::end) {
+                break;
+            }
+
+            statements.push_back(statement());
+
+            if (peek().type == Token_type::semicolon) {
+                advance();
+            } else if (peek().type != Token_type::end) {
+                error("expected ';' or end of input");
+            }
+        }
+
+        if (statements.empty()) {
+            error("expected a term");
+        }
+
+        return statements;
     }
 
 private:
@@ -291,6 +341,20 @@ private:
     {
         auto k = peek().type;
         return k == Token_type::identifier || k == Token_type::paren_l || k == Token_type::backslash || k == Token_type::print;
+    }
+
+    // Parse one statement. A definition starts with `identifier '='`; anything
+    // else is an ordinary expression.
+    auto statement() -> Statement
+    {
+        if (peek().type == Token_type::identifier && tokens[index + 1].type == Token_type::equal) {
+            auto name = advance().text;
+            advance(); // '='
+            auto value = term();
+            return Definition{std::move(name), value};
+        }
+
+        return term();
     }
 
     // Parse a sequence of atoms as a left-associative application:
@@ -474,18 +538,51 @@ auto evaluate_and_print(lc::ast::Ast_context &ctx, lc::ast::Node_id ast, const O
     }
 }
 
+// Expand and store a definition. Throws when the definition has a free name
+// that is not defined, which keeps every stored definition closed.
+auto define_term(lc::ast::Ast_context &ctx, lc::Environment &env, const lc::parse::Definition &definition) -> lc::ast::Node_id
+{
+    auto expansion = lc::expand_globals(ctx, env, definition.value);
+    if (!expansion.unresolved.empty()) {
+        throw std::runtime_error(std::format("undefined variable '{}'", expansion.unresolved.front()));
+    }
+
+    env.values.insert_or_assign(definition.name, expansion.node);
+    return expansion.node;
+}
+
+// Run one program statement. Definitions update the environment and, in the
+// REPL, are echoed back; expressions are expanded with the current definitions
+// and evaluated.
+auto execute_statement(lc::ast::Ast_context &ctx, lc::Environment &env, const lc::parse::Statement &statement, const Options &options, bool print_definition) -> void
+{
+    if (auto *definition = std::get_if<lc::parse::Definition>(&statement)) {
+        auto node = define_term(ctx, env, *definition);
+        if (print_definition) {
+            std::print("{} = ", definition->name);
+            print_ast(ctx, node);
+        }
+        return;
+    }
+
+    auto expansion = lc::expand_globals(ctx, env, std::get<lc::ast::Node_id>(statement));
+    evaluate_and_print(ctx, expansion.node, options);
+}
+
 // Interactive read-eval-print loop.
 //
 // Example session:
 //
-//     lc > (\x.\y. x y) y
-//     \y'.y y'
+//     lc > identity = \a.a
+//     identity = \a.a
+//     lc > identity identity
+//     \a.a
 //     lc > :q
 //     Have a nice day!
 //
-// All input lines share the same `Ast_context`, so the arena keeps growing as
-// more terms are parsed and evaluated.
-auto run_repl(lc::ast::Ast_context &ctx, const Options &options) -> void
+// All input lines share the same `Ast_context` and `Environment`, so both the
+// arena and named definitions persist until the REPL exits.
+auto run_repl(lc::ast::Ast_context &ctx, lc::Environment &env, const Options &options) -> void
 {
     std::println("-- Lambda Calculus REPL <github.com/rrrinav/lc>");
     std::println("Use '\\' or 'λ' for lambda, e.g. 'λx.x'");
@@ -510,8 +607,10 @@ auto run_repl(lc::ast::Ast_context &ctx, const Options &options) -> void
 
         try {
             auto tokens = lc::parse::Lexer(line).tokenize();
-            auto ast = lc::parse::Parser(tokens, ctx).parse();
-            evaluate_and_print(ctx, ast, options);
+            auto statements = lc::parse::Parser(tokens, ctx).parse_program();
+            for (const auto &statement : statements) {
+                execute_statement(ctx, env, statement, options, true);
+            }
         } catch (const std::exception &e) {
             std::println("Error: {}", e.what());
         }
@@ -536,6 +635,9 @@ auto main(int argc, char *argv[]) -> int
     // Owns every AST node for the lifetime of the program.
     lc::ast::Ast_context ctx{&pool};
 
+    // Named definitions created with `name = term`.
+    lc::Environment env{&pool};
+
     Options options;
     try {
         options = parse_options(argc, argv);
@@ -552,7 +654,7 @@ auto main(int argc, char *argv[]) -> int
 
     // No input file: interactive mode.
     if (!options.file.has_value()) {
-        run_repl(ctx, options);
+        run_repl(ctx, env, options);
         return EXIT_SUCCESS;
     }
 
@@ -567,8 +669,10 @@ auto main(int argc, char *argv[]) -> int
         std::string code{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 
         auto tokens = lc::parse::Lexer(code).tokenize();
-        auto ast = lc::parse::Parser(tokens, ctx).parse();
-        evaluate_and_print(ctx, ast, options);
+        auto statements = lc::parse::Parser(tokens, ctx).parse_program();
+        for (const auto &statement : statements) {
+            execute_statement(ctx, env, statement, options, false);
+        }
 
     } catch (const std::exception &e) {
         std::println(stderr, "Error: {}", e.what());

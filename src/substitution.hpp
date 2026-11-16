@@ -4,20 +4,89 @@
 //
 // These are the two operations the evaluators use to perform beta reduction:
 //
-//     (\x. body) value   ->   body[x := value]
+//     (\x. body) arg   ->   body[x := arg]
 //
-// The tricky part is that names can be shadowed and substitution can capture a
-// free variable. For example:
+// The evaluator calls:
+//
+//     Substitutor{ctx, "x", arg}(body)
+//
+// with:
+//     name        = "x"    the variable being replaced
+//     replacement = arg    the term inserted in its place
+//
+// `replacement` is the *argument*, not the body. Every capture check below asks
+// about the argument and never about the body.
+//
+// In one line, Substitutor{ctx, name, replacement}(tree):
+//   - replaces every free occurrence of `name` in `tree` with `replacement`
+//   - stops at a binder that shadows `name`
+//   - alpha-renames a binder whose name occurs free in `replacement`
+//   - does not rename because of names that are bound inside `tree`
+//
+// --------------------------------------------------------------------------
+// Demo run 1: capture is possible, so the binder is renamed
+// --------------------------------------------------------------------------
+//
+// Evaluate:
 //
 //     (\x.\y. x y) y
 //
-// Substituting `x := y` into `\y. x y` directly would give `\y. y y`, which is
-// wrong: the argument `y` would become bound by the inner `\y`. Instead we
-// rename the bound `y` to a fresh name first:
+// The evaluator sees:
 //
-//     \y. x y   ->   \y'. x y'   ->   \y'. y y'
+//     App(Abs("x", Abs("y", App(Var("x"), Var("y")))), Var("y"))
 //
-// This file implements that renaming and substitution.
+// and calls:
+//
+//     Substitutor{ctx, "x", Var("y")}   on   Abs("y", App(Var("x"), Var("y")))
+//
+//     name        = "x"
+//     replacement = Var("y")              <- the bare free argument
+//
+// Walking the body `\y. x y`:
+//
+//     apply(Abs("y", ...))
+//       abs.param "y" != name "x"          -> the binder does not shadow x
+//       variable_occurs_free_in(ctx, "y", replacement) == true
+//       because `replacement` is the bare y, so inserting it under \y would
+//       capture it. Rename the binder first:
+//
+//     \y. x y  --(rename y -> y')-->  \y'. x y'  --(x := y)-->  \y'. y y'
+//
+// It then makes two substitution passes:
+//
+//     Substitutor{ctx, "y", Var("y'")}   renames bound y in the body
+//     Substitutor{ctx, "x", Var("y")}    inserts the argument
+//
+// Result: `\y'. y y'`. Without the rename we would get `\y. y y`, where the
+// inserted `y` is wrongly bound by the inner lambda.
+//
+// --------------------------------------------------------------------------
+// Demo run 2: no free name in the replacement, so no rename
+// --------------------------------------------------------------------------
+//
+// Evaluate:
+//
+//     (\x.\y. x y) (\y.y)
+//
+// Now the call is:
+//
+//     Substitutor{ctx, "x", Abs("y", Var("y"))}
+//
+//     name        = "x"
+//     replacement = Abs("y", Var("y"))    <- y is bound inside the argument
+//
+// Walking the body `\y. x y`:
+//
+//     abs.param "y" != name "x"          -> the binder does not shadow x
+//     variable_occurs_free_in(ctx, "y", replacement) == false
+//     because the y in `\y.y` is bound by the argument's own lambda. It cannot
+//     be captured, so the binder stays:
+//
+//     substitution:  \y. x y  --(x := \y.y)-->  \y. (\y.y) y
+//     later beta:    \y. (\y.y) y  -->  \y.y
+//
+// The walk does visit the body `\y. x y`, but the question "is y free?" is
+// asked about `replacement`. A y bound in the body says nothing about capture.
 
 #include "ast.hpp"
 
@@ -29,15 +98,16 @@
 
 // Returns true when `name` occurs free in `tree_to_search`.
 //
-// A variable is free when it is not bound by an enclosing lambda. Examples:
+// The check is always about one concrete tree. It does not look at any larger
+// term the tree might later be inserted into. Examples:
 //
-//     is_variable_free(ctx, "y", \x.\y. x y)  -> false  (bound by inner \y)
-//     is_variable_free(ctx, "x", \x.\y. x y)  -> false  (bound by outer \x)
-//     is_variable_free(ctx, "z", \x.\y. x y)  -> true   (z is not present)
+//     variable_occurs_free_in(ctx, "y", \x.\y. x y)  -> false  (bound by inner \y)
+//     variable_occurs_free_in(ctx, "x", \x.\y. x y)  -> false  (bound by outer \x)
+//     variable_occurs_free_in(ctx, "z", \x.\y. x y)  -> true   (z is not present)
 //
 // The App case checks both sides; the Abs case stops at the binder that matches
 // the name, because occurrences under that binder refer to the bound variable.
-inline auto is_variable_free(lc::ast::Ast_context &ctx, const std::string &name, lc::ast::Node_id tree_to_search) -> bool
+inline auto variable_occurs_free_in(lc::ast::Ast_context &ctx, const std::string &name, lc::ast::Node_id tree_to_search) -> bool
 {
     using namespace lc::ast;
     return std::visit(
@@ -49,36 +119,36 @@ inline auto is_variable_free(lc::ast::Ast_context &ctx, const std::string &name,
                 return search_space.name == name;
             } else if constexpr (std::is_same_v<T, Abs>) {
                 // If the param name is not same, then it is free
-                return search_space.param != name && is_variable_free(ctx, name, search_space.body);
+                return search_space.param != name && variable_occurs_free_in(ctx, name, search_space.body);
             } else if constexpr (std::is_same_v<T, App>) {
-                return is_variable_free(ctx, name, search_space.left) || is_variable_free(ctx, name, search_space.right);
+                return variable_occurs_free_in(ctx, name, search_space.left) || variable_occurs_free_in(ctx, name, search_space.right);
             } else {
                 return false;
             }
         },
-        ctx.get(tree_to_search)); // Safe: is_variable_free doesn't allocate
+        ctx.get(tree_to_search)); // Safe: variable_occurs_free_in doesn't allocate
 }
 
 // Capture-avoiding substitution: replace free occurrences of `name` in an AST
-// with `value`.
+// with a replacement term.
 //
 // Example:
 //
 //     Substitutor{ctx, "x", ctx.make_var("y")}(body_of(\x.\y. x y))
 //
 // produces the term `\y'. y y'`: the inner binder `y` is renamed because the
-// replacement value `y` would otherwise be captured.
+// replacement term `y` would otherwise be captured.
 //
 // Shadowing example:
 //
-//     Substitutor{ctx, "x", value}(body_of(\x. x))  ->  \x. x
+//     Substitutor{ctx, "x", replacement}(body_of(\x. x))  ->  \x. x
 //
 // The inner `\x` shadows the outer `x`, so the bound occurrence is left alone.
 struct Substitutor
 {
     lc::ast::Ast_context &ctx;
     std::string name;
-    lc::ast::Node_id value;
+    lc::ast::Node_id replacement;
 
     // Optional output parameter used by the trace renderer. Whenever an
     // alpha-rename happens, `(old_name, fresh_name)` is appended so the trace
@@ -99,7 +169,7 @@ private:
     // Variable case: replace it only when the names match.
     auto apply(lc::ast::Node_id self, const lc::ast::Var &v) const -> lc::ast::Node_id
     {
-        return v.name == name ? value : self;
+        return v.name == name ? replacement : self;
     }
 
     // Abstraction case: substitute under the binder unless the binder shadows
@@ -112,8 +182,25 @@ private:
             return self;
         }
 
-        // No capture risk: the binder name does not occur free in the value.
-        if (!is_variable_free(ctx, abs.param, value)) {
+        // Alpha-renaming is only needed when the *replacement term* contains a
+        // free occurrence of this binder's name. A bound occurrence inside the
+        // replacement cannot be captured: it is already bound by its own lambda.
+        //
+        // Capture example: substituting x := y into \y. x y.
+        //   replacement = y
+        //   variable_occurs_free_in(ctx, "y", replacement) == true
+        // so \y must be renamed; otherwise the inserted y would become bound.
+        //
+        // Safe example: substituting x := \y.y into \y. x y.
+        //   replacement = \y.y
+        //   variable_occurs_free_in(ctx, "y", replacement) == false
+        // because the y in the replacement is bound by the replacement's own
+        // lambda. Keeping \y unchanged captures nothing.
+        //
+        // This check is about `replacement`, not about `abs.body`. Seeing "y"
+        // bound inside the body (for example in \x.\y. x y) says nothing about
+        // whether the replacement needs renaming.
+        if (!variable_occurs_free_in(ctx, abs.param, replacement)) {
             return ctx.make_abs(abs.param, (*this)(abs.body));
         }
 
@@ -142,12 +229,12 @@ private:
     }
 
     // Pick a name that is not the variable being replaced, not free in the
-    // replacement value, and not free in the body. The apostrophe suffix keeps
+    // replacement term, and not free in the body. The apostrophe suffix keeps
     // the name recognisable: y, y', y'', ...
     auto fresh_name(const std::string &base, lc::ast::Node_id body) const -> std::string
     {
         std::string candidate = base;
-        while (candidate == name || is_variable_free(ctx, candidate, value) || is_variable_free(ctx, candidate, body)) {
+        while (candidate == name || variable_occurs_free_in(ctx, candidate, replacement) || variable_occurs_free_in(ctx, candidate, body)) {
             candidate += '\'';
         }
         return candidate;

@@ -1,0 +1,65 @@
+# Since expressions are getting complicated, we will be using variables
+# like `identity = \x. x`
+# Comparing Church numerals, written with named definitions.
+#
+# A number n is a function that applies f to x n times:
+#
+#     0 = \f.\x.x
+#     3 = \f.\x.f (f (f x))
+#
+# x >= y can be computed by applying the predecessor to y exactly x times:
+#
+#     x pred y == 0   means   x >= y
+#
+# because 0 - 1 is still 0 under the predecessor function.
+
+# Booleans
+true  = \a.\b.a;
+false = \a.\b.b;
+not   = \boolean. boolean false true;
+and   = \first.\second. first second false;
+
+# Numerals
+zero  = \f.\x.x;
+one   = \f.\x.f x;
+two   = \f.\x.f (f x);
+three = \f.\x.f (f (f x));
+
+# Arithmetic
+pred    = \n.\f.\x. n (\g.\h. h (g f)) (\u.x) (\u.u);
+is_zero = \n. n (\ignored. false) true;
+
+# Comparisons
+#   x >= y  =  is_zero (x pred y)
+#   x <= y  =  y >= x
+#   x == y  =  (x >= y) and (y >= x)
+#   x >  y  =  (x >= y) and not (x == y)
+#   x <  y  =  (x <= y) and not (x == y)
+ge = \left.\right. is_zero (left pred right);
+le = \left.\right. ge right left;
+eq = \left.\right. and (ge left right) (ge right left);
+gt = \left.\right. and (ge left right) (not (eq left right));
+lt = \left.\right. and (le left right) (not (eq left right));
+
+# Each expression prints its normal form:
+#   true  = \a.\b.a
+#   false = \a.\b.b
+gt two one;      # true  = \a.\b.a
+lt one two;      # true  = \a.\b.a
+eq two two;      # true  = \a.\b.a
+ge one two;      # false = \a.\b.b
+le three two;    # false = \a.\b.b
+eq zero zero;    # true  = \a.\b.a
+
+# The definitions also compute actual values, not just booleans:
+pred three;      # two  = \f.\x.f (f x)
+pred zero;       # zero = \f.\x.x
+is_zero zero;    # true = \a.\b.a
+is_zero three;   # false = \a.\b.b
+
+# Comparisons work on computed expressions too:
+eq (pred three) two;        # true  (2 == 2)
+gt (pred three) one;        # true  (2 > 1)
+le (pred three) two;        # true  (2 <= 2)
+lt (pred zero) one;         # true  (0 < 1)
+eq (pred three) (pred two); # false (2 == 1)

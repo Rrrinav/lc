@@ -1,0 +1,4 @@
+identity = \a.a
+identity identity
+const = \a.\b.a
+const identity

@@ -37,6 +37,30 @@ pairs (see `tests/README.md`). It accepts `--compiler`, `--std`,
 
 The final line is the normal form. `print` steps are annotated with `(print)`.
 
+## Definitions
+
+Use `name = term` to save a closed term in the environment:
+
+```text
+lc > identity = \a.a
+identity = \a.a
+lc > identity identity
+\a.a
+```
+
+Definitions persist for the rest of the REPL session. In a file, separate
+statements with `;`:
+
+```text
+identity = \a.a;
+const = \a.\b.a;
+const identity
+```
+
+Definitions may refer to earlier definitions, but they must be closed and are
+not recursive (use a fixed-point combinator for recursion). They are expanded
+before evaluation, so `--trace` shows the expanded term.
+
 The C++ API exposes both implementations through the same template:
 
 ```cpp
@@ -55,11 +79,11 @@ Terms/things Support:
 - Beta reduction ("normal substitution")
 - Alpha renaming
 - Strongly typed AST node ids (`Strong_id<Tag>`)
+- Named definitions / environment (`identity = \a.a`)
 
 Maybe TODOs:
 - "Normal arithematic" which internally uses church numerals.
 - proper printing
-- Term variables
 
 ## References
 

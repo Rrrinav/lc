@@ -1,0 +1,3 @@
+id = \a.a;
+const = \a.\b.a;
+const id

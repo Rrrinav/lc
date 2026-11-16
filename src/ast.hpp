@@ -171,7 +171,7 @@ struct Ast_context
     }
 
     // Returns the node for an id. The const overload is used by readers such as
-    // the pretty-printer and `is_variable_free`.
+    // the pretty-printer and `variable_occurs_free_in`.
     auto get(Node_id id) -> Node_data &
     {
         return memory[checked_index(id)];

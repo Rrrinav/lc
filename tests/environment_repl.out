@@ -1,0 +1,4 @@
+lc > identity = \a.a
+lc > \a.a
+lc > const = \a.\b.a
+lc > \b.\a.a
